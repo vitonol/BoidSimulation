@@ -8,7 +8,6 @@
 #include "BFlock.generated.h"
 
 class UInstancedStaticMeshComponent;
-class UBoxComponent;
 
 #define DEBUG_ENABLED 1
 
@@ -34,25 +33,21 @@ protected:
 	
 	TArray<FVector> BoidCurrentLocations;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadWrite)
-	float BoidsSpawnRadius;
-
-public:
-	// void MoveBoids(float D);
+	TArray<FVector> BoidsVelocities;
 	
-	// void UpdateLocations();
+	UPROPERTY(VisibleAnywhere, BlueprintReadWrite)
+	float SpreadRadius = 400.f;
 	
 	//MOVEMENT
 protected:
-	TArray<FVector> BoidsVelocities;
+	
+	FVector Align(TArray<FVector>& BoidsPositions, const int32 CurrentIndex);
+	
+	FVector Separate(TArray<FVector>& BoidsPositions, const int32 CurrentIndex);
+	
+	FVector Cohere(TArray<FVector>& BoidsPositions, const int32 CurrentIndex);
 
-	TArray<FRotator> BoidsRotations;
-	
-	FVector Align(TArray<FVector>& BoidsPositions, int CurrentIndex);
-	
-	FVector Separate(TArray<FVector>& BoidsPositions, int CurrentIndex);
-	
-	FVector Cohere(TArray<FVector>& BoidsPositions, int CurrentIndex);
+	void Redirect(FVector& Direction, const int32 CurrentIndex);
 
 public:
 
@@ -69,8 +64,6 @@ public:
 	
 protected:
 	
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
-	UBoxComponent* Box;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boid Adjustments");
 	int NumInstances = 50;
@@ -87,8 +80,16 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boid Adjustments", meta = (ClampMin = "1.0", ClampMax = "20.0", UIMin = "1.0", UIMax = "20.0"));
 	float CohesionStrength = 4.f;
 	
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boid Adjustments", meta = (ClampMin = "80.0", ClampMax = "1200.0", UIMin = "80.0", UIMax = "1200.0"));
-	float ProximityRadius = 360.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boid Adjustments", meta = (ClampMin = "50.0", ClampMax = "1200.0", UIMin = "50.0", UIMax = "1200.0"));
+	float ProximityRadius = 70.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boid Adjustments", meta = (UIMin = "90.0", UIMax = "900.0"));
+	float MinMovementSpeed = 90.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boid Adjustments", meta = (UIMin = "90.0", UIMax = "900.0"));
+	float MaxMovementSpeed = 900.f;
+
+	
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boid DEBUG")
 	bool bToggleProximityDebug = true;

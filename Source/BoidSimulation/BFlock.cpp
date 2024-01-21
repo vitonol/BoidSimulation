@@ -3,32 +3,25 @@
 
 #include "BFlock.h"
 
-#include "Components/BoxComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
 
 ABFlock::ABFlock()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.bStartWithTickEnabled = true;
-
-	Box = CreateDefaultSubobject<UBoxComponent>(FName("Box"));
-	Box->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	Box->SetBoxExtent(FVector(1000.f));
-	Box->SetHiddenInGame(false);
-	SetRootComponent(Box);
 	
 	ISMComp = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("ISM"));
-	ISMComp->SetupAttachment(Box);
+	SetRootComponent(ISMComp);
 	ISMComp->SetMobility(EComponentMobility::Static);
 	ISMComp->SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
 	ISMComp->SetGenerateOverlapEvents(false);
-	
-	BoidsSpawnRadius = 500.f;
 }
 
 void ABFlock::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
+
+	DrawDebugSphere(GetWorld(), GetActorLocation(), SpreadRadius, 8, FColor::Orange);
 }
 
 void ABFlock::BeginPlay()
@@ -51,9 +44,9 @@ void ABFlock::BeginPlay()
 	{
 		//Alternatively spawn boids in the box
 		// FVector SpawnPoint = RandomPointInBoundingBox(Box->GetCenterOfMass(), Box->GetUnscaledBoxExtent());
-		FVector SpawnPoint = FVector(FMath::RandRange(-1.f, 1.f) * BoidsSpawnRadius,
-										FMath::RandRange(-1.f, 1.f) * BoidsSpawnRadius,
-										FMath::RandRange(-1.f, 1.f) * BoidsSpawnRadius);
+		FVector SpawnPoint = FVector(FMath::RandRange(-1.f, 1.f) * SpreadRadius,
+										FMath::RandRange(-1.f, 1.f) * SpreadRadius,
+										FMath::RandRange(-1.f, 1.f) * SpreadRadius);
 
 		FRotator RandomRotator = FRotator(0.f,
 										FMath::RandRange(0.f, 359.998993f),
@@ -304,12 +297,54 @@ FVector ABFlock::Cohere(TArray<FVector>& BoidsPositions, int CurrentIndex)
 	}
 }
 
+UE_NODISCARD FORCEINLINE FVector LerpNormals(const FVector& A, const FVector& B, const double Alpha)
+{
+	const FQuat RotationDifference = FQuat::FindBetweenNormals(A, B);
+
+	FVector Axis; double Angle;
+	RotationDifference.ToAxisAndAngle(Axis, Angle);
+
+	return FQuat{Axis, Angle * Alpha}.RotateVector(A);
+}
+
+void ABFlock::Redirect(FVector& Direction, const int32 CurrentIndex)
+{
+	FTransform Transform{NoInit};
+	ISMComp->GetInstanceTransform(CurrentIndex,Transform);
+
+	if (Transform.GetTranslation().SizeSquared() > FMath::Square(SpreadRadius - ProximityRadius - UE_DOUBLE_KINDA_SMALL_NUMBER))
+	{
+		const double Dist = Transform.GetTranslation().Size();
+		const FVector Dir = Transform.GetTranslation() / Dist;
+
+		// Calculate CrossProduct
+		// FVector RightAxis = Direction ^ Dir;
+		FVector RightAxis = Direction.Cross(Dir);
+
+		FVector TargetDirection;
+		if(RightAxis.SizeSquared() > UE_DOUBLE_KINDA_SMALL_NUMBER)
+		{
+			RightAxis = RightAxis.GetUnsafeNormal();
+			TargetDirection = RightAxis.RotateAngleAxisRad(UE_DOUBLE_PI / 2.0, Dir).RotateAngleAxisRad(-UE_DOUBLE_PI / 4.0, RightAxis);
+		}
+		else
+		{
+			TargetDirection = -Dir;
+		}
+
+		const double Alpha = FMath::GetMappedRangeValueUnclamped<double, double>({SpreadRadius - ProximityRadius - UE_DOUBLE_KINDA_SMALL_NUMBER, SpreadRadius},
+																				{0.0, 1.0}, Dist);
+		Direction = LerpNormals(Direction, TargetDirection, Alpha);
+	}
+	
+}
+
 void ABFlock::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	TArray<FTransform> TempBuffer;
-	TempBuffer.Empty(NumInstances);
+	// TArray<FTransform> TempBuffer;
+	// TempBuffer.Reserve(NumInstances);
 	for (int32 i = 0; i < NumInstances; i++)
 	{
 		FVector Acceleration = FVector::ZeroVector;
@@ -323,10 +358,16 @@ void ABFlock::Tick(float DeltaTime)
 		//Update Stored Locations
 		BoidCurrentLocations[i] = CurrentBoidLoc;
 
+		//Update position
+		FVector NewBoidLocation = CurrentBoidLoc + (CurrentBoidVelocity * DeltaTime);		
+
+		Redirect(BoidsVelocities[i], i);
 		//update position
-		InstanceTransform.SetLocation(CurrentBoidLoc + (CurrentBoidVelocity * DeltaTime));
+		InstanceTransform.SetLocation(NewBoidLocation);
 		//update rotation
 		InstanceTransform.SetRotation(CurrentBoidVelocity.ToOrientationQuat());
+
+		//Keep them inside
 		
 		//apply steering to acceleration vector
 		Acceleration += Separate(BoidCurrentLocations,i);
@@ -335,11 +376,11 @@ void ABFlock::Tick(float DeltaTime)
 
 		//update velocities
 		BoidsVelocities[i] += (Acceleration * DeltaTime);
-		BoidsVelocities[i] = BoidsVelocities[i].GetClampedToSize(400.f, 800.f);
+		BoidsVelocities[i] = BoidsVelocities[i].GetClampedToSize(MinMovementSpeed, MaxMovementSpeed);
 
-		TempBuffer.Add(InstanceTransform);
+		// TempBuffer.Add(InstanceTransform);
 		//Alternative is below, outside of the loop
-		// ISMComp->UpdateInstanceTransform(i, InstanceTransform, false, false, false);
+		ISMComp->UpdateInstanceTransform(i, InstanceTransform);
 
 #if DEBUG_ENABLED
 		if (bToggleProximityDebug)
@@ -348,7 +389,7 @@ void ABFlock::Tick(float DeltaTime)
 	}
 	
 	//Optimization? 
-	ISMComp->BatchUpdateInstancesTransforms(0, TempBuffer);
+	// ISMComp->BatchUpdateInstancesTransforms(0, TempBuffer);
 	
 #if DEBUG_ENABLED
 	FString str = TEXT("Average Velocity: " ) + GetVectorArrayAverage(BoidsVelocities).ToString();
@@ -361,6 +402,12 @@ void ABFlock::Tick(float DeltaTime)
 	
 	// Possibly usefull
 	// ISMComp->ReleasePerInstanceRenderData();
+
+#if UE_BUILD_DEVELOPMENT
+	// DrawDebugSphere(GetWorld(), GetActorLocation(), SpreadRadius, 8, FColor::Orange);
+
+#endif
+	
 	
 #if DEBUG_ENABLED
 	FString msg1 = FString::Printf(TEXT("InstanceCount: %i"), GetInstanceCount() );
