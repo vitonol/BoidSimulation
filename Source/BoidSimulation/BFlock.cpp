@@ -22,6 +22,8 @@ ABFlock::ABFlock()
 	ISMComp->SetMobility(EComponentMobility::Static);
 	ISMComp->SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
 	ISMComp->SetGenerateOverlapEvents(false);
+	
+	BoidsSpawnRadius = 500.f;
 }
 
 void ABFlock::OnConstruction(const FTransform& Transform)
@@ -53,12 +55,12 @@ void ABFlock::BeginPlay()
 										FMath::RandRange(-1.f, 1.f) * BoidsSpawnRadius,
 										FMath::RandRange(-1.f, 1.f) * BoidsSpawnRadius);
 
-		FRotator RandomRotator = FRotator(FMath::RandRange(0.f, 359.998993f),
-													FMath::RandRange(0.f, 359.998993f),
-													FMath::RandRange(0.f, 359.998993f));
+		FRotator RandomRotator = FRotator(0.f,
+										FMath::RandRange(0.f, 359.998993f),
+										0.f);
 
-		FTransform Transform(RandomRotator, SpawnPoint, FVector(1.f, 0.5f, 0.3f));
-		Transforms.Add(Transform);		
+		FTransform Transform(RandomRotator, SpawnPoint);
+		Transforms.Add(Transform);
 	}
 	ISMComp->AddInstances(Transforms, false, false);
 	
@@ -353,7 +355,7 @@ void ABFlock::Tick(float DeltaTime)
 	GEngine->AddOnScreenDebugMessage(-1, 0.f, FColor::Red, *str);
 #endif
 	
-	SetRandomColor(); // Moving to blueprints
+	// SetRandomColor(); // Moving to blueprints
 
 	if ( GetInstanceCount() > 0) ISMComp->MarkRenderTransformDirty();
 	

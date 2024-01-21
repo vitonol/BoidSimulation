@@ -33,8 +33,9 @@ protected:
 	UInstancedStaticMeshComponent* ISMComp;
 	
 	TArray<FVector> BoidCurrentLocations;
-	
-	float BoidsSpawnRadius = 1500.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadWrite)
+	float BoidsSpawnRadius;
 
 public:
 	// void MoveBoids(float D);
