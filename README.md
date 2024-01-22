@@ -1,4 +1,4 @@
-#Boid Simulation Example
+# **Boid Simulation Example**
 
 Boid flocking simulation using Unreal Engine 5 and Instanced Static Mesh Component
 
