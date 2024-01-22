@@ -5,6 +5,11 @@
 
 #include "Components/InstancedStaticMeshComponent.h"
 
+DECLARE_STATS_GROUP(TEXT("BoidProfiling"), STATGROUP_BoidProfiling, STATCAT_Advanced);
+
+DECLARE_CYCLE_STAT(TEXT("Simulate (GT)"), STAT_Simulate_GameThread, STATGROUP_BoidProfiling);
+DECLARE_CYCLE_STAT(TEXT("Simulate (Task)"), STAT_Simulate_WorkerThread, STATGROUP_BoidProfiling);
+
 ABFlock::ABFlock()
 {
 	PrimaryActorTick.bCanEverTick = true;
@@ -28,25 +33,25 @@ void ABFlock::BeginPlay()
 {
 	Super::BeginPlay();
 	
-	// No need to reserve since SetNum does it
-	// BoidCurrentLocations.Reserve(NumOfInstances);
-	// BoidsVelocities.Reserve(NumOfInstances);
-	
-	BoidsVelocities.SetNum(NumInstances);
-	BoidCurrentLocations.SetNum(NumInstances);
+	// BoidsVelocities.SetNum(NumInstances);
+	// BoidCurrentLocations.SetNum(NumInstances);
+	UpdateBuffers(NumInstances);
+	InstanceIndecies.SetNum(NumInstances);
 
 	if ( GetInstanceCount() != 0) ISMComp->ClearInstances();
 
 	TArray<FTransform> Transforms;
 	Transforms.Reserve(NumInstances);
+
+	float SpawnBounds = SpreadRadius * 0.5f;
 	
 	for (int32 i = 0; i < NumInstances; i++)    
 	{
 		//Alternatively spawn boids in the box
 		// FVector SpawnPoint = RandomPointInBoundingBox(Box->GetCenterOfMass(), Box->GetUnscaledBoxExtent());
-		FVector SpawnPoint = FVector(FMath::RandRange(-1.f, 1.f) * SpreadRadius,
-										FMath::RandRange(-1.f, 1.f) * SpreadRadius,
-										FMath::RandRange(-1.f, 1.f) * SpreadRadius);
+		FVector SpawnPoint = FVector(FMath::RandRange(-1.f, 1.f) * SpawnBounds,
+										FMath::RandRange(-1.f, 1.f) * SpawnBounds,
+										FMath::RandRange(-1.f, 1.f) * SpawnBounds);
 
 		FRotator RandomRotator = FRotator(0.f,
 										FMath::RandRange(0.f, 359.998993f),
@@ -55,14 +60,18 @@ void ABFlock::BeginPlay()
 		FTransform Transform(RandomRotator, SpawnPoint);
 		Transforms.Add(Transform);
 	}
-	ISMComp->AddInstances(Transforms, false, false);
+	InstanceIndecies = ISMComp->AddInstances(Transforms, true, false);
 	
 }
 
 void ABFlock::AddInstances(int32 NumToAdd)
 {
-	SetActorTickEnabled(false);
+	// SetActorTickEnabled(false);
 	if (NumToAdd <= 0) return;
+	
+	UpdateBuffers(GetInstanceCount() + NumToAdd);
+	// BoidCurrentLocations.SetNum(NewInstanceCount);
+	// BoidsVelocities.SetNum(NewInstanceCount);
 
 	TArray<FTransform> InstancesToAdd;
 	InstancesToAdd.Reserve(NumToAdd);
@@ -70,37 +79,62 @@ void ABFlock::AddInstances(int32 NumToAdd)
 	for (int i = 0; i < NumToAdd; ++i)
 	{
 		// Create new instances and add their transforms to the array
-		// You can adjust the position and rotation based on your requirements
 		FTransform NewTransform = FTransform::Identity;
 		InstancesToAdd.Add(NewTransform);
 	}
 
-	ISMComp->AddInstances(InstancesToAdd, false, false);
-	SetActorTickEnabled(true);
-	// NumInstances = GetInstanceCount();
+	InstanceIndecies.Append(ISMComp->AddInstances(InstancesToAdd, true));
+	
+	// SetActorTickEnabled(true);
+	NumInstances = GetInstanceCount();
+}
+
+void ABFlock::UpdateBuffers(int32 NewCount)
+{
+	BoidCurrentLocations.SetNum(NewCount);
+	BoidsVelocities.SetNum(NewCount);
 }
 
 void ABFlock::RemoveInstances(int32 NumToRemove)
 {
 	SetActorTickEnabled(false);
-	if (NumToRemove <= 0) return;
+	if (ensure(NumToRemove <= 0)) return;
 
-	int32 CurrentInstanceCount = GetInstanceCount();
-	int32 NumToRemoveClamped = FMath::Clamp(NumToRemove, 0, GetInstanceCount());
+	const int32 InitialInstanceCount = GetInstanceCount();
+	const int32 NewInstanceCount = FMath::Max(0, InitialInstanceCount - NumToRemove);
 
+	// Ensure the indices are within bounds
+	if (NumToRemove > InstanceIndecies.Num())
+	{
+		// Print an error or use UE_LOG to indicate the issue
+		UE_LOG(LogTemp, Error, TEXT("Attempting to remove more instances than available."));
+		return;
+	}
+	UpdateBuffers(NewInstanceCount);
+	
+	// BoidCurrentLocations.SetNum(NewInstanceCount);
+	// BoidsVelocities.SetNum(NewInstanceCount);
+	
 	TArray<int32> InstancesToRemove;
-	InstancesToRemove.Reserve(NumToRemoveClamped);
+	InstancesToRemove.Reserve(NumToRemove);
 
 	// Collect indices of instances to remove
-	for (int i = 0; i < NumToRemoveClamped; ++i)
+	for (int32 i = InstanceIndecies.Num() - 1; i >= InstanceIndecies.Num() - 1 - NumToRemove ; --i)
 	{
-		InstancesToRemove.Add(CurrentInstanceCount - 1 - i);
+		InstancesToRemove.Add(InstanceIndecies[i]);
+		UE_LOG(LogTemp, Log, TEXT("Removing: %i"), InstanceIndecies[i] );
 	}
-	
-	ISMComp->RemoveInstances(InstancesToRemove);
+	if (ISMComp->RemoveInstances(InstancesToRemove))
+	{
+		UE_LOG(LogTemp, Log, TEXT("Succesfully Removed: %i instances"), NumToRemove);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Could not remove instances"));
+	}
 	SetActorTickEnabled(true);
 
-	// NumInstances = GetInstanceCount();
+	NumInstances = GetInstanceCount();
 }
 
 FVector ABFlock::GetVectorArrayAverage(const TArray<FVector>& Vectors)
@@ -149,6 +183,7 @@ int ABFlock::GetInstanceCount()
 
 FVector ABFlock::Separate(TArray<FVector>& BoidsPositions, int CurrentIndex)
 {
+	DECLARE_SCOPE_CYCLE_COUNTER(TEXT("Separate"), STAT_Separate, STATGROUP_BoidProfiling);
 	FVector Steering = FVector::ZeroVector;
 	int32 FlockCount = 0.0f;
 	FVector SeparationDirection = FVector::ZeroVector;
@@ -206,6 +241,7 @@ FVector ABFlock::Separate(TArray<FVector>& BoidsPositions, int CurrentIndex)
 
 FVector ABFlock::Align(TArray<FVector>& BoidsPositions, int CurrentIndex)
 {
+	DECLARE_SCOPE_CYCLE_COUNTER(TEXT("Align"), STAT_Align, STATGROUP_BoidProfiling);
 	FVector Steering = FVector::ZeroVector;
 	int32 FlockCount = 0.0f;
 
@@ -251,6 +287,8 @@ FVector ABFlock::Align(TArray<FVector>& BoidsPositions, int CurrentIndex)
 
 FVector ABFlock::Cohere(TArray<FVector>& BoidsPositions, int CurrentIndex)
 {
+	DECLARE_SCOPE_CYCLE_COUNTER(TEXT("Cohere"), STAT_Cohere, STATGROUP_BoidProfiling);
+	
 	FVector Steering = FVector::ZeroVector;
 	int32 FlockCount = 0.0f;
 	FVector AveragePosition = FVector::ZeroVector;
@@ -309,6 +347,8 @@ UE_NODISCARD FORCEINLINE FVector LerpNormals(const FVector& A, const FVector& B,
 
 void ABFlock::Redirect(FVector& Direction, const int32 CurrentIndex)
 {
+	DECLARE_SCOPE_CYCLE_COUNTER(TEXT("Redirect"), STAT_Redirect, STATGROUP_BoidProfiling);
+	
 	FTransform Transform{NoInit};
 	ISMComp->GetInstanceTransform(CurrentIndex,Transform);
 
@@ -341,6 +381,7 @@ void ABFlock::Redirect(FVector& Direction, const int32 CurrentIndex)
 
 void ABFlock::Tick(float DeltaTime)
 {
+	SCOPE_CYCLE_COUNTER(STAT_Simulate_GameThread);
 	Super::Tick(DeltaTime);
 
 	// TArray<FTransform> TempBuffer;
@@ -353,6 +394,13 @@ void ABFlock::Tick(float DeltaTime)
 		ISMComp->GetInstanceTransform(i,InstanceTransform);
 		FVector CurrentBoidLoc = InstanceTransform.GetLocation();
 
+		if (i >= BoidsVelocities.Num())
+		{
+			// Print an error or use UE_LOG to indicate the issue
+			UE_LOG(LogTemp, Error, TEXT("BoidsVelocities index out of bounds: %d"), i);
+			continue;
+		}
+		
 		FVector CurrentBoidVelocity = BoidsVelocities[i];
 
 		//Update Stored Locations
@@ -392,8 +440,8 @@ void ABFlock::Tick(float DeltaTime)
 	// ISMComp->BatchUpdateInstancesTransforms(0, TempBuffer);
 	
 #if DEBUG_ENABLED
-	FString str = TEXT("Average Velocity: " ) + GetVectorArrayAverage(BoidsVelocities).ToString();
-	GEngine->AddOnScreenDebugMessage(-1, 0.f, FColor::Red, *str);
+	// FString str = TEXT("Average Velocity: " ) + GetVectorArrayAverage(BoidsVelocities).ToString();
+	// GEngine->AddOnScreenDebugMessage(-1, 0.f, FColor::Red, *str);
 #endif
 	
 	// SetRandomColor(); // Moving to blueprints
