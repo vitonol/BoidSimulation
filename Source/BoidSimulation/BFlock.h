@@ -71,9 +71,6 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boid Adjustments");
 	int NumInstances = 50;
-
-	// UPROPERTY(EditAnywhere, BlueprintReadWrite);
-	// float MovementSpeed = 400.f;
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boid Adjustments", meta = (ClampMin = "10.0", ClampMax = "500.0", UIMin = "10.0", UIMax = "500.0"));
 	float AlignmentStrength = 302.f;

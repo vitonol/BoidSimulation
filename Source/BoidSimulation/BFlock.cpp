@@ -33,8 +33,6 @@ void ABFlock::BeginPlay()
 {
 	Super::BeginPlay();
 	
-	// BoidsVelocities.SetNum(NumInstances);
-	// BoidCurrentLocations.SetNum(NumInstances);
 	UpdateBuffers(NumInstances);
 	InstanceIndecies.SetNum(NumInstances);
 
@@ -64,18 +62,22 @@ void ABFlock::BeginPlay()
 	
 }
 
+void ABFlock::UpdateBuffers(int32 NewCount)
+{
+	BoidCurrentLocations.SetNum(NewCount);
+	BoidsVelocities.SetNum(NewCount);
+}
+
 void ABFlock::AddInstances(int32 NumToAdd)
 {
 	// SetActorTickEnabled(false);
 	if (NumToAdd <= 0) return;
 	
 	UpdateBuffers(GetInstanceCount() + NumToAdd);
-	// BoidCurrentLocations.SetNum(NewInstanceCount);
-	// BoidsVelocities.SetNum(NewInstanceCount);
-
+	
 	TArray<FTransform> InstancesToAdd;
 	InstancesToAdd.Reserve(NumToAdd);
-
+	
 	for (int i = 0; i < NumToAdd; ++i)
 	{
 		// Create new instances and add their transforms to the array
@@ -87,12 +89,6 @@ void ABFlock::AddInstances(int32 NumToAdd)
 	
 	// SetActorTickEnabled(true);
 	NumInstances = GetInstanceCount();
-}
-
-void ABFlock::UpdateBuffers(int32 NewCount)
-{
-	BoidCurrentLocations.SetNum(NewCount);
-	BoidsVelocities.SetNum(NewCount);
 }
 
 void ABFlock::RemoveInstances(int32 NumToRemove)
@@ -111,9 +107,6 @@ void ABFlock::RemoveInstances(int32 NumToRemove)
 		return;
 	}
 	UpdateBuffers(NewInstanceCount);
-	
-	// BoidCurrentLocations.SetNum(NewInstanceCount);
-	// BoidsVelocities.SetNum(NewInstanceCount);
 	
 	TArray<int32> InstancesToRemove;
 	InstancesToRemove.Reserve(NumToRemove);
@@ -173,13 +166,6 @@ int ABFlock::GetInstanceCount()
 	if (ISMComp != nullptr) return ISMComp->GetInstanceCount();
 	return 0;
 }
-
-// FVector ABFlock::RandomPointInBoundingBox(const FVector Center, const FVector HalfSize)
-// {
-// 	const FVector BoxMin = Center - HalfSize;
-// 	const FVector BoxMax = Center + HalfSize;
-// 	return FMath::RandPointInBox(FBox(BoxMin, BoxMax));
-// }
 
 FVector ABFlock::Separate(TArray<FVector>& BoidsPositions, int CurrentIndex)
 {
@@ -383,41 +369,39 @@ void ABFlock::Tick(float DeltaTime)
 {
 	SCOPE_CYCLE_COUNTER(STAT_Simulate_GameThread);
 	Super::Tick(DeltaTime);
-
-	// TArray<FTransform> TempBuffer;
-	// TempBuffer.Reserve(NumInstances);
-	for (int32 i = 0; i < NumInstances; i++)
-	{
+	
+	ParallelFor(NumInstances, [&](const int32 i) -> void
+	{		
 		FVector Acceleration = FVector::ZeroVector;
+		FVector CurrentBoidVelocity = BoidsVelocities[i];
 		
-		FTransform InstanceTransform;
+		FTransform InstanceTransform{NoInit};
 		ISMComp->GetInstanceTransform(i,InstanceTransform);
 		FVector CurrentBoidLoc = InstanceTransform.GetLocation();
 
+		//TODO Adress this issue, when adding / removing items at runtime 
 		if (i >= BoidsVelocities.Num())
 		{
-			// Print an error or use UE_LOG to indicate the issue
 			UE_LOG(LogTemp, Error, TEXT("BoidsVelocities index out of bounds: %d"), i);
-			continue;
+			return;
 		}
 		
-		FVector CurrentBoidVelocity = BoidsVelocities[i];
-
 		//Update Stored Locations
 		BoidCurrentLocations[i] = CurrentBoidLoc;
 
 		//Update position
 		FVector NewBoidLocation = CurrentBoidLoc + (CurrentBoidVelocity * DeltaTime);		
 
+		//Keep boids inside
 		Redirect(BoidsVelocities[i], i);
+		
 		//update position
 		InstanceTransform.SetLocation(NewBoidLocation);
 		//update rotation
 		InstanceTransform.SetRotation(CurrentBoidVelocity.ToOrientationQuat());
 
-		//Keep them inside
-		
-		//apply steering to acceleration vector
+		//TODO Pre-filter near flockmates and only pass relevant array of boids for force calculations
+		//apply steering forces to acceleration vector
 		Acceleration += Separate(BoidCurrentLocations,i);
 		Acceleration += Align(BoidCurrentLocations,i);
 		Acceleration += Cohere(BoidCurrentLocations,i);
@@ -425,38 +409,15 @@ void ABFlock::Tick(float DeltaTime)
 		//update velocities
 		BoidsVelocities[i] += (Acceleration * DeltaTime);
 		BoidsVelocities[i] = BoidsVelocities[i].GetClampedToSize(MinMovementSpeed, MaxMovementSpeed);
-
-		// TempBuffer.Add(InstanceTransform);
-		//Alternative is below, outside of the loop
-		ISMComp->UpdateInstanceTransform(i, InstanceTransform);
-
-#if DEBUG_ENABLED
-		if (bToggleProximityDebug)
-			DrawDebugSphere(GetWorld(), CurrentBoidLoc, ProximityRadius, 4, FColor::Purple );
-#endif
-	}
-	
-	//Optimization? 
-	// ISMComp->BatchUpdateInstancesTransforms(0, TempBuffer);
-	
-#if DEBUG_ENABLED
-	// FString str = TEXT("Average Velocity: " ) + GetVectorArrayAverage(BoidsVelocities).ToString();
-	// GEngine->AddOnScreenDebugMessage(-1, 0.f, FColor::Red, *str);
-#endif
+		
+		ISMComp->UpdateInstanceTransform(i, InstanceTransform);		
+	});
+		
 	
 	// SetRandomColor(); // Moving to blueprints
 
-	if ( GetInstanceCount() > 0) ISMComp->MarkRenderTransformDirty();
-	
-	// Possibly usefull
-	// ISMComp->ReleasePerInstanceRenderData();
+	ISMComp->MarkRenderTransformDirty();
 
-#if UE_BUILD_DEVELOPMENT
-	// DrawDebugSphere(GetWorld(), GetActorLocation(), SpreadRadius, 8, FColor::Orange);
-
-#endif
-	
-	
 #if DEBUG_ENABLED
 	FString msg1 = FString::Printf(TEXT("InstanceCount: %i"), GetInstanceCount() );
 	GEngine->AddOnScreenDebugMessage(-1, 0.f, FColor::White, *msg1);
