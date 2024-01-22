@@ -5,8 +5,8 @@
 
 #include "Components/InstancedStaticMeshComponent.h"
 
+// Declare performance profiling stats
 DECLARE_STATS_GROUP(TEXT("BoidProfiling"), STATGROUP_BoidProfiling, STATCAT_Advanced);
-
 DECLARE_CYCLE_STAT(TEXT("Simulate (GT)"), STAT_Simulate_GameThread, STATGROUP_BoidProfiling);
 DECLARE_CYCLE_STAT(TEXT("Simulate (Task)"), STAT_Simulate_WorkerThread, STATGROUP_BoidProfiling);
 
@@ -20,24 +20,21 @@ ABFlock::ABFlock()
 	ISMComp->SetMobility(EComponentMobility::Static);
 	ISMComp->SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
 	ISMComp->SetGenerateOverlapEvents(false);
-}
-
-void ABFlock::OnConstruction(const FTransform& Transform)
-{
-	Super::OnConstruction(Transform);
-
-	DrawDebugSphere(GetWorld(), GetActorLocation(), SpreadRadius, 8, FColor::Orange);
+	
+	InitialSpawnScale = FVector{1.f};
 }
 
 void ABFlock::BeginPlay()
 {
 	Super::BeginPlay();
 	
+	// Update buffers and clear instances
 	UpdateBuffers(NumInstances);
 	InstanceIndecies.SetNum(NumInstances);
 
 	if ( GetInstanceCount() != 0) ISMComp->ClearInstances();
 
+	// Spawn instances with random transforms
 	TArray<FTransform> Transforms;
 	Transforms.Reserve(NumInstances);
 
@@ -45,8 +42,6 @@ void ABFlock::BeginPlay()
 	
 	for (int32 i = 0; i < NumInstances; i++)    
 	{
-		//Alternatively spawn boids in the box
-		// FVector SpawnPoint = RandomPointInBoundingBox(Box->GetCenterOfMass(), Box->GetUnscaledBoxExtent());
 		FVector SpawnPoint = FVector(FMath::RandRange(-1.f, 1.f) * SpawnBounds,
 										FMath::RandRange(-1.f, 1.f) * SpawnBounds,
 										FMath::RandRange(-1.f, 1.f) * SpawnBounds);
@@ -55,11 +50,10 @@ void ABFlock::BeginPlay()
 										FMath::RandRange(0.f, 359.998993f),
 										0.f);
 
-		FTransform Transform(RandomRotator, SpawnPoint);
+		FTransform Transform(RandomRotator, SpawnPoint, InitialSpawnScale);
 		Transforms.Add(Transform);
 	}
 	InstanceIndecies = ISMComp->AddInstances(Transforms, true, false);
-	
 }
 
 void ABFlock::UpdateBuffers(int32 NewCount)
@@ -91,13 +85,13 @@ void ABFlock::AddInstances(int32 NumToAdd)
 	NumInstances = GetInstanceCount();
 }
 
+//TODO Rework the logic for below function
 void ABFlock::RemoveInstances(int32 NumToRemove)
 {
 	SetActorTickEnabled(false);
 	if (ensure(NumToRemove <= 0)) return;
-
-	const int32 InitialInstanceCount = GetInstanceCount();
-	const int32 NewInstanceCount = FMath::Max(0, InitialInstanceCount - NumToRemove);
+	
+	const int32 NewInstanceCount = FMath::Max(0, GetInstanceCount() - NumToRemove);
 
 	// Ensure the indices are within bounds
 	if (NumToRemove > InstanceIndecies.Num())
@@ -146,27 +140,13 @@ FVector ABFlock::GetVectorArrayAverage(const TArray<FVector>& Vectors)
 	return Average;
 }
 
-void ABFlock::SetRandomColor()
-{
-	TArray<float> CustomData;
-	CustomData.Init(0.f, 3);
-	CustomData[0] = FMath::RandRange(0.95f, 1.f);
-	CustomData[1] = FMath::RandRange(0.24f, 0.3f);
-	CustomData[2] = FMath::RandRange(0.28f, 0.32f);
-	
-	for (int32 i = 0; i < NumInstances; i++)
-	{
-		ISMComp->SetCustomData(i, CustomData, false);
-	}
-	ISMComp->MarkRenderStateDirty();
-}
-
 int ABFlock::GetInstanceCount()
 {
 	if (ISMComp != nullptr) return ISMComp->GetInstanceCount();
 	return 0;
 }
 
+// Calculate separation steering force
 FVector ABFlock::Separate(TArray<FVector>& BoidsPositions, int CurrentIndex)
 {
 	DECLARE_SCOPE_CYCLE_COUNTER(TEXT("Separate"), STAT_Separate, STATGROUP_BoidProfiling);
@@ -225,6 +205,7 @@ FVector ABFlock::Separate(TArray<FVector>& BoidsPositions, int CurrentIndex)
 	}
 }
 
+// Calculate aligning steering force
 FVector ABFlock::Align(TArray<FVector>& BoidsPositions, int CurrentIndex)
 {
 	DECLARE_SCOPE_CYCLE_COUNTER(TEXT("Align"), STAT_Align, STATGROUP_BoidProfiling);
@@ -271,6 +252,7 @@ FVector ABFlock::Align(TArray<FVector>& BoidsPositions, int CurrentIndex)
 	}
 }
 
+// Calculate Grouping-up steering force
 FVector ABFlock::Cohere(TArray<FVector>& BoidsPositions, int CurrentIndex)
 {
 	DECLARE_SCOPE_CYCLE_COUNTER(TEXT("Cohere"), STAT_Cohere, STATGROUP_BoidProfiling);
@@ -321,6 +303,7 @@ FVector ABFlock::Cohere(TArray<FVector>& BoidsPositions, int CurrentIndex)
 	}
 }
 
+// Linearly interpolates between two normalized vectors A and B using spherical linear interpolation
 UE_NODISCARD FORCEINLINE FVector LerpNormals(const FVector& A, const FVector& B, const double Alpha)
 {
 	const FQuat RotationDifference = FQuat::FindBetweenNormals(A, B);
@@ -331,6 +314,7 @@ UE_NODISCARD FORCEINLINE FVector LerpNormals(const FVector& A, const FVector& B,
 	return FQuat{Axis, Angle * Alpha}.RotateVector(A);
 }
 
+// Change Direction when boids get near the bounds
 void ABFlock::Redirect(FVector& Direction, const int32 CurrentIndex)
 {
 	DECLARE_SCOPE_CYCLE_COUNTER(TEXT("Redirect"), STAT_Redirect, STATGROUP_BoidProfiling);
@@ -362,14 +346,14 @@ void ABFlock::Redirect(FVector& Direction, const int32 CurrentIndex)
 																				{0.0, 1.0}, Dist);
 		Direction = LerpNormals(Direction, TargetDirection, Alpha);
 	}
-	
 }
 
 void ABFlock::Tick(float DeltaTime)
 {
 	SCOPE_CYCLE_COUNTER(STAT_Simulate_GameThread);
 	Super::Tick(DeltaTime);
-	
+
+	//Multithreading allowing multiple iterations to be executed concurrently
 	ParallelFor(NumInstances, [&](const int32 i) -> void
 	{		
 		FVector Acceleration = FVector::ZeroVector;
@@ -380,7 +364,7 @@ void ABFlock::Tick(float DeltaTime)
 		FVector CurrentBoidLoc = InstanceTransform.GetLocation();
 
 		//TODO Adress this issue, when adding / removing items at runtime 
-		if (i >= BoidsVelocities.Num())
+		if (i >= BoidsVelocities.Num()-1)
 		{
 			UE_LOG(LogTemp, Error, TEXT("BoidsVelocities index out of bounds: %d"), i);
 			return;
@@ -412,10 +396,7 @@ void ABFlock::Tick(float DeltaTime)
 		
 		ISMComp->UpdateInstanceTransform(i, InstanceTransform);		
 	});
-		
 	
-	// SetRandomColor(); // Moving to blueprints
-
 	ISMComp->MarkRenderTransformDirty();
 
 #if DEBUG_ENABLED

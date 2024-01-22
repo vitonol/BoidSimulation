@@ -9,7 +9,12 @@
 
 class UInstancedStaticMeshComponent;
 
-#define DEBUG_ENABLED 1
+#define DEBUG_ENABLED 0
+
+/**
+ * The ABFlock class represents a flocking behavior simulation using instanced static meshes.
+ * Adjustable parameters are exposed to UI and help to dial in specific behaviour.
+ */
 
 UCLASS()
 class BOIDSIMULATION_API ABFlock : public AActor
@@ -19,9 +24,7 @@ class BOIDSIMULATION_API ABFlock : public AActor
 public:	
 
 	ABFlock();
-
-	virtual void OnConstruction(const FTransform& Transform) override;
-
+	
 	virtual void Tick(float DeltaTime) override;
 
 protected:
@@ -30,11 +33,14 @@ protected:
 	//COMPONENTS
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
 	UInstancedStaticMeshComponent* ISMComp;
-	
-	TArray<FVector> BoidCurrentLocations;
 
+	// Arrays to store current locations and velocities of boids
+	TArray<FVector> BoidCurrentLocations;
 	TArray<FVector> BoidsVelocities;
-	
+
+	// Set in UI before spawning this actor
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	FVector InitialSpawnScale;
 	
 	//MOVEMENT
 protected:
@@ -51,8 +57,6 @@ public:
 
 	UFUNCTION(BlueprintCallable)
 	inline int GetInstanceCount();    
-	
-	void SetRandomColor();
 
 	UFUNCTION(BlueprintCallable)
 	void UpdateBuffers(int32 NewCount);
@@ -65,9 +69,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	TArray<int32> InstanceIndecies;
-	
+
+	//Default Configurations
 protected:
-	
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boid Adjustments");
 	int NumInstances = 50;
@@ -96,7 +100,9 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boid DEBUG")
 	bool bToggleProximityDebug = true;
 
-	inline FVector RandomPointInBoundingBox(const FVector Center, const FVector HalfSize) { return FMath::RandPointInBox(FBox(Center - HalfSize, Center + HalfSize)); }
+	//Not Currenly Used
+	static inline FVector RandomPointInBoundingBox(const FVector& Center, const FVector& HalfSize) { return FMath::RandPointInBox(FBox(Center - HalfSize, Center + HalfSize)); }
 
+	//Helper function
 	FVector GetVectorArrayAverage(const TArray<FVector>& Vectors);
 };
