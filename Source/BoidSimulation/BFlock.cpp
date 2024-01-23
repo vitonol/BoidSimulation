@@ -303,7 +303,7 @@ FVector ABFlock::Cohere(TArray<FVector>& BoidsPositions, int CurrentIndex)
 	}
 }
 
-// Linearly interpolates between two normalized vectors A and B using spherical linear interpolation
+// Linearly interpolates between two normalized vectors using spherical linear interpolation
 UE_NODISCARD FORCEINLINE FVector LerpNormals(const FVector& A, const FVector& B, const double Alpha)
 {
 	const FQuat RotationDifference = FQuat::FindBetweenNormals(A, B);
