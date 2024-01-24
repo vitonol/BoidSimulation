@@ -372,10 +372,10 @@ void ABFlock::Tick(float DeltaTime)
 		
 		//Update Stored Locations
 		BoidCurrentLocations[i] = CurrentBoidLoc;
-
+		
 		//Update position
 		FVector NewBoidLocation = CurrentBoidLoc + (CurrentBoidVelocity * DeltaTime);		
-
+		
 		//Keep boids inside
 		Redirect(BoidsVelocities[i], i);
 		
