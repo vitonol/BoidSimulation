@@ -30,7 +30,7 @@ void ABFlock::BeginPlay()
 	
 	// Update buffers and clear instances
 	UpdateBuffers(NumInstances);
-	InstanceIndecies.SetNum(NumInstances);
+	InstanceIndices.SetNum(NumInstances);
 
 	if ( GetInstanceCount() != 0) ISMComp->ClearInstances();
 
@@ -53,7 +53,7 @@ void ABFlock::BeginPlay()
 		FTransform Transform(RandomRotator, SpawnPoint, InitialSpawnScale);
 		Transforms.Add(Transform);
 	}
-	InstanceIndecies = ISMComp->AddInstances(Transforms, true, false);
+	InstanceIndices = ISMComp->AddInstances(Transforms, true, false);
 }
 
 void ABFlock::UpdateBuffers(int32 NewCount)
@@ -79,7 +79,7 @@ void ABFlock::AddInstances(int32 NumToAdd)
 		InstancesToAdd.Add(NewTransform);
 	}
 
-	InstanceIndecies.Append(ISMComp->AddInstances(InstancesToAdd, true));
+	InstanceIndices.Append(ISMComp->AddInstances(InstancesToAdd, true));
 	
 	// SetActorTickEnabled(true);
 	NumInstances = GetInstanceCount();
@@ -94,7 +94,7 @@ void ABFlock::RemoveInstances(int32 NumToRemove)
 	const int32 NewInstanceCount = FMath::Max(0, GetInstanceCount() - NumToRemove);
 
 	// Ensure the indices are within bounds
-	if (NumToRemove > InstanceIndecies.Num())
+	if (NumToRemove > InstanceIndices.Num())
 	{
 		// Print an error or use UE_LOG to indicate the issue
 		UE_LOG(LogTemp, Error, TEXT("Attempting to remove more instances than available."));
@@ -106,10 +106,10 @@ void ABFlock::RemoveInstances(int32 NumToRemove)
 	InstancesToRemove.Reserve(NumToRemove);
 
 	// Collect indices of instances to remove
-	for (int32 i = InstanceIndecies.Num() - 1; i >= InstanceIndecies.Num() - 1 - NumToRemove ; --i)
+	for (int32 i = InstanceIndices.Num() - 1; i >= InstanceIndices.Num() - 1 - NumToRemove ; --i)
 	{
-		InstancesToRemove.Add(InstanceIndecies[i]);
-		UE_LOG(LogTemp, Log, TEXT("Removing: %i"), InstanceIndecies[i] );
+		InstancesToRemove.Add(InstanceIndices[i]);
+		UE_LOG(LogTemp, Log, TEXT("Removing: %i"), InstanceIndices[i] );
 	}
 	if (ISMComp->RemoveInstances(InstancesToRemove))
 	{
@@ -146,19 +146,31 @@ int ABFlock::GetInstanceCount()
 	return 0;
 }
 
+// Linearly interpolates between two normalized vectors using spherical linear interpolation
+UE_NODISCARD FORCEINLINE FVector LerpNormals(const FVector& A, const FVector& B, const double Alpha)
+{
+	const FQuat RotationDifference = FQuat::FindBetweenNormals(A, B);
+
+	FVector Axis; double Angle;
+	RotationDifference.ToAxisAndAngle(Axis, Angle);
+
+	return FQuat{Axis, Angle * Alpha}.RotateVector(A);
+}
+
+
 // Calculate separation steering force
-FVector ABFlock::Separate(TArray<FVector>& BoidsPositions, int CurrentIndex)
+FVector ABFlock::Separate(TArray<FVector>& BoidsPositions, int CurrentIndex) const
 {
 	DECLARE_SCOPE_CYCLE_COUNTER(TEXT("Separate"), STAT_Separate, STATGROUP_BoidProfiling);
+	
 	FVector Steering = FVector::ZeroVector;
-	int32 FlockCount = 0.0f;
+	int32 FlockCount = 0;
 	FVector SeparationDirection = FVector::ZeroVector;
 	float ProximityFactor = 0.0f;
 	
 	FTransform InstanceTransform;
 	ISMComp->GetInstanceTransform(CurrentIndex,InstanceTransform);
 	const FVector ForwardVector = InstanceTransform.GetUnitAxis(EAxis::X);
-	
 	const FVector CurrentPosition = BoidsPositions[CurrentIndex];
 	
 	//get separation steering force for each of the boid's flockmates
@@ -170,7 +182,6 @@ FVector ABFlock::Separate(TArray<FVector>& BoidsPositions, int CurrentIndex)
 		{
 			continue;
 		}
-		
 		SeparationDirection = CurrentPosition - OtherPosition;
 		SeparationDirection = SeparationDirection.GetSafeNormal();
 		ProximityFactor = 1.0 - (SeparationDirection.Size() / ProximityRadius);
@@ -179,14 +190,11 @@ FVector ABFlock::Separate(TArray<FVector>& BoidsPositions, int CurrentIndex)
 		{
 			continue;
 		}
-
 		// filter other boids which outside of the field of view
-		//TODO Impmlement view angle for other functions as well, and test
 		if (FVector::DotProduct(ForwardVector, (OtherPosition - CurrentPosition).GetSafeNormal()) <= -1.0f)
 		{
 			continue;
 		}
-
 		//add steering force for each nearby boid
 		Steering += (ProximityFactor * SeparationDirection);
 		FlockCount++;
@@ -195,27 +203,49 @@ FVector ABFlock::Separate(TArray<FVector>& BoidsPositions, int CurrentIndex)
 	if (FlockCount > 0)
 	{
 		Steering /= FlockCount;
-		Steering.GetSafeNormal() -= BoidsVelocities[CurrentIndex].GetSafeNormal();
 		Steering *= SeparationStrength;
 		return Steering;
 	}
-	else
-	{
-		return FVector::ZeroVector;
-	}
+	else return FVector::ZeroVector;
 }
 
-// Calculate aligning steering force
-FVector ABFlock::Align(TArray<FVector>& BoidsPositions, int CurrentIndex)
+FVector ABFlock::Separate(const TArrayView<FVector>& Velocities, const int32 CurrentIndex, const TConstArrayView<int32>& OtherRelevantBoidIndices) const
+{
+	DECLARE_SCOPE_CYCLE_COUNTER(TEXT("Separate_Rel"), STAT_Separate, STATGROUP_BoidProfiling);
+
+	FTransform CurrentTransform{NoInit};
+	ISMComp->GetInstanceTransform(CurrentIndex, CurrentTransform);
+	
+	FVector Steering = Velocities[CurrentIndex];
+	
+	for (const int32 OtherBoidIndex : OtherRelevantBoidIndices)
+	{
+		FTransform OtherTransform{NoInit};
+		ISMComp->GetInstanceTransform(OtherBoidIndex, OtherTransform);
+
+		const FVector Translation = FTransform::SubtractTranslations(CurrentTransform, OtherTransform);
+		if (UNLIKELY(Translation.SizeSquared() < UE_DOUBLE_KINDA_SMALL_NUMBER)) continue;
+
+		const double Dist = Translation.Size();
+
+		Steering += Translation * (((1.0 - (Dist / ProximityRadius)) / Dist) * SeparationStrength);
+	}
+	Steering.Normalize();
+	
+	return  Steering;
+}
+
+FVector ABFlock::Align(TArray<FVector>& BoidsPositions, const int32 CurrentIndex) const
 {
 	DECLARE_SCOPE_CYCLE_COUNTER(TEXT("Align"), STAT_Align, STATGROUP_BoidProfiling);
+	
 	FVector Steering = FVector::ZeroVector;
-	int32 FlockCount = 0.0f;
+	int32 FlockCount = 0;
 
 	FTransform InstanceTransform;
 	ISMComp->GetInstanceTransform(CurrentIndex,InstanceTransform);
-	const FVector ForwardVector = InstanceTransform.GetUnitAxis(EAxis::X);	
-	
+	const FVector ForwardVector = InstanceTransform.GetUnitAxis(EAxis::X);
+
 	const FVector CurrentPosition = BoidsPositions[CurrentIndex];
 	for (FVector OtherPosition : BoidsPositions)
 	{		
@@ -226,7 +256,7 @@ FVector ABFlock::Align(TArray<FVector>& BoidsPositions, int CurrentIndex)
 		{
 			continue;
 		}
-
+	
 		// filter other birds which are outside of the field of view angle
 		if (FVector::DotProduct(ForwardVector, (OtherPosition - CurrentPosition).GetSafeNormal()) <= 0.5f)
 		{
@@ -242,23 +272,41 @@ FVector ABFlock::Align(TArray<FVector>& BoidsPositions, int CurrentIndex)
 	{
 		//get alignment force to average flock direction
 		Steering /= FlockCount;
-		Steering.GetSafeNormal() -= BoidsVelocities[CurrentIndex].GetSafeNormal();
 		Steering *= AlignmentStrength;
 		return Steering;
 	}
-	else
+	else return FVector::ZeroVector;
+}
+
+// Calculate aligning steering force of relevant boids only
+FVector ABFlock::Align(const TArrayView<FVector>& Velocities, const int32 CurrentIndex, const TConstArrayView<int32>& OtherRelevantBoidIndices) const
+{
+	DECLARE_SCOPE_CYCLE_COUNTER(TEXT("Align_rel"), STAT_Align, STATGROUP_BoidProfiling);
+
+	FVector Steering = FVector::ZeroVector;
+	if (OtherRelevantBoidIndices.IsEmpty()) return Steering;
+
+	for (const int32 OtherBoidIndex : OtherRelevantBoidIndices)
 	{
-		return FVector::ZeroVector;
+		Steering += BoidCurrentLocations[OtherBoidIndex];
 	}
+
+	Steering /= OtherRelevantBoidIndices.Num();
+	Steering.Normalize();
+
+	const double Alpha = FMath::Min(1.0, static_cast<double>(OtherRelevantBoidIndices.Num()) / 15.0) * AlignmentStrength;
+	Steering = LerpNormals(Velocities[CurrentIndex], Steering, Alpha);
+
+	return Steering;
 }
 
 // Calculate Grouping-up steering force
-FVector ABFlock::Cohere(TArray<FVector>& BoidsPositions, int CurrentIndex)
+FVector ABFlock::Cohere(TArray<FVector>& BoidsPositions, int CurrentIndex) const 
 {
 	DECLARE_SCOPE_CYCLE_COUNTER(TEXT("Cohere"), STAT_Cohere, STATGROUP_BoidProfiling);
 	
 	FVector Steering = FVector::ZeroVector;
-	int32 FlockCount = 0.0f;
+	int32 FlockCount = 0;
 	FVector AveragePosition = FVector::ZeroVector;
 
 	FTransform InstanceTransform;
@@ -280,7 +328,6 @@ FVector ABFlock::Cohere(TArray<FVector>& BoidsPositions, int CurrentIndex)
 			continue;
 		}
 		// filter other boids which outside of the field of view
-		//TODO Impmlement view angle for other functions as well, and test
 		if (FVector::DotProduct(ForwardVector, (OtherPosition - CurrentPosition).GetSafeNormal()) <= -0.5f)
 		{
 			continue; //flockmate is outside viewing angle, disregard this flockmate and continue the loop
@@ -297,21 +344,32 @@ FVector ABFlock::Cohere(TArray<FVector>& BoidsPositions, int CurrentIndex)
 		Steering *= CohesionStrength;
 		return Steering;
 	}
-	else
-	{
-		return FVector::ZeroVector;
-	}
+	else return FVector::ZeroVector;
 }
 
-// Linearly interpolates between two normalized vectors using spherical linear interpolation
-UE_NODISCARD FORCEINLINE FVector LerpNormals(const FVector& A, const FVector& B, const double Alpha)
+FVector ABFlock::Cohere(const TArrayView<FVector>& Velocities, const int32 CurrentIndex, const TConstArrayView<int32>& OtherRelevantBoidIndices) const
 {
-	const FQuat RotationDifference = FQuat::FindBetweenNormals(A, B);
+	DECLARE_SCOPE_CYCLE_COUNTER(TEXT("Cohere_rel"), STAT_Cohere, STATGROUP_BoidProfiling);
 
-	FVector Axis; double Angle;
-	RotationDifference.ToAxisAndAngle(Axis, Angle);
+	FVector Steering = FVector::ZeroVector;
 
-	return FQuat{Axis, Angle * Alpha}.RotateVector(A);
+	if (OtherRelevantBoidIndices.IsEmpty()) return Steering;
+	
+	for (const int32 OtherBoidIndex : OtherRelevantBoidIndices)
+	{
+		FTransform OtherTransform{NoInit};
+		ISMComp->GetInstanceTransform(OtherBoidIndex, OtherTransform);
+
+		Steering += OtherTransform.GetTranslation();
+	}
+	Steering /= OtherRelevantBoidIndices.Num();
+
+	const FVector DirToAverageLocation = (Steering - BoidCurrentLocations[CurrentIndex].GetSafeNormal());
+
+	const double Alpha = FMath::GetMappedRangeValueClamped<double, double>({0.0, 15.0}, {0.0, CohesionStrength}, static_cast<double>(OtherRelevantBoidIndices.Num()));
+	Steering = LerpNormals(Velocities[CurrentIndex], DirToAverageLocation, Alpha);
+	
+	return Steering;
 }
 
 // Change Direction when boids get near the bounds
@@ -355,31 +413,22 @@ void ABFlock::Tick(float DeltaTime)
 
 	//Multithreading allowing multiple iterations to be executed concurrently
 	ParallelFor(NumInstances, [&](const int32 i) -> void
-	{		
+	{
 		FVector Acceleration = FVector::ZeroVector;
 		FVector CurrentBoidVelocity = BoidsVelocities[i];
 		
 		FTransform InstanceTransform{NoInit};
 		ISMComp->GetInstanceTransform(i,InstanceTransform);
 		FVector CurrentBoidLoc = InstanceTransform.GetLocation();
-
-		//TODO Adress this issue, when adding / removing items at runtime 
-		if (i >= BoidsVelocities.Num()-1)
-		{
-			UE_LOG(LogTemp, Error, TEXT("BoidsVelocities index out of bounds: %d"), i);
-			return;
-		}
-		
+				
 		//Update Stored Locations
 		BoidCurrentLocations[i] = CurrentBoidLoc;
 		
-		//Update position
-		FVector NewBoidLocation = CurrentBoidLoc + (CurrentBoidVelocity * DeltaTime);		
-		
-		//Keep boids inside
+		//Keep boids inside the bounds
 		Redirect(BoidsVelocities[i], i);
 		
 		//update position
+		FVector NewBoidLocation = CurrentBoidLoc + (CurrentBoidVelocity * DeltaTime);		
 		InstanceTransform.SetLocation(NewBoidLocation);
 		//update rotation
 		InstanceTransform.SetRotation(CurrentBoidVelocity.ToOrientationQuat());
@@ -394,14 +443,12 @@ void ABFlock::Tick(float DeltaTime)
 		BoidsVelocities[i] += (Acceleration * DeltaTime);
 		BoidsVelocities[i] = BoidsVelocities[i].GetClampedToSize(MinMovementSpeed, MaxMovementSpeed);
 		
-		ISMComp->UpdateInstanceTransform(i, InstanceTransform);		
+		ISMComp->UpdateInstanceTransform(i, InstanceTransform, false, false);
 	});
-	
 	ISMComp->MarkRenderTransformDirty();
-
-#if DEBUG_ENABLED
-	FString msg1 = FString::Printf(TEXT("InstanceCount: %i"), GetInstanceCount() );
-	GEngine->AddOnScreenDebugMessage(-1, 0.f, FColor::White, *msg1);
-#endif
 }
+
+
+	
+
 

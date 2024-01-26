@@ -38,6 +38,9 @@ protected:
 	TArray<FVector> BoidCurrentLocations;
 	TArray<FVector> BoidsVelocities;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	TArray<int32> InstanceIndices;
+
 	// Set in UI before spawning this actor
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	FVector InitialSpawnScale;
@@ -45,18 +48,21 @@ protected:
 	//MOVEMENT
 protected:
 	
-	FVector Align(TArray<FVector>& BoidsPositions, const int32 CurrentIndex);
+	FVector Align(TArray<FVector>& BoidsPositions, const int32 CurrentIndex) const ;
+	FVector Align(const TArrayView<FVector>& Velocities, const int32 CurrentIndex, const TConstArrayView<int32>& OtherRelevantBoidIndices) const;
 	
-	FVector Separate(TArray<FVector>& BoidsPositions, const int32 CurrentIndex);
-	
-	FVector Cohere(TArray<FVector>& BoidsPositions, const int32 CurrentIndex);
+	FVector Separate(TArray<FVector>& BoidsPositions, const int32 CurrentIndex) const;
+	FVector Separate(const TArrayView<FVector>& Velocities, const int32 CurrentIndex, const TConstArrayView<int32>& OtherRelevantBoidIndices) const;
+
+	FVector Cohere(TArray<FVector>& BoidsPositions, const int32 CurrentIndex) const;
+	FVector Cohere(const TArrayView<FVector>& Velocities, const int32 CurrentIndex, const TConstArrayView<int32>& OtherRelevantBoidIndices) const;
 
 	void Redirect(FVector& Direction, const int32 CurrentIndex);
 
 public:
 
 	UFUNCTION(BlueprintCallable)
-	inline int GetInstanceCount();    
+	int GetInstanceCount();    
 
 	UFUNCTION(BlueprintCallable)
 	void UpdateBuffers(int32 NewCount);
@@ -67,22 +73,19 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void RemoveInstances(int32 NumToRemove);
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	TArray<int32> InstanceIndecies;
-
 	//Default Configurations
 protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boid Adjustments");
 	int NumInstances = 50;
 	
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boid Adjustments", meta = (ClampMin = "10.0", ClampMax = "500.0", UIMin = "10.0", UIMax = "500.0"));
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boid Adjustments", meta = (ClampMin = "0", ClampMax = "500.0", UIMin = "0", UIMax = "500.0"));
 	float AlignmentStrength = 302.f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boid Adjustments", meta = (ClampMin = "5.0", ClampMax = "60.0", UIMin = "5.0", UIMax = "60.0"));
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boid Adjustments", meta = (ClampMin = "0", ClampMax = "60.0", UIMin = "0", UIMax = "60.0"));
 	float SeparationStrength = 25.f;
 	
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boid Adjustments", meta = (ClampMin = "0.5", ClampMax = "15.0", UIMin = "1.0", UIMax = "15.0"));
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boid Adjustments", meta = (ClampMin = "0", ClampMax = "15.0", UIMin = "0", UIMax = "15.0"));
 	float CohesionStrength = 1.3f;
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boid Adjustments", meta = (ClampMin = "30.0", ClampMax = "1200.0", UIMin = "30.0", UIMax = "1200.0"));
