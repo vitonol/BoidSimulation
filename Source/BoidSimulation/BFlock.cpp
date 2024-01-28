@@ -177,8 +177,8 @@ FVector ABFlock::Separate(TArray<FVector>& BoidsPositions, int CurrentIndex) con
 	for (FVector OtherPosition : BoidsPositions)
 	{
 		// Ignore self and filer out irrelevant far away birds
-		const float ProximityDistance = FVector::Dist(CurrentPosition, OtherPosition);
-		if (CurrentPosition == OtherPosition || ProximityDistance > ProximityRadius)
+		const float ProximityDistanceSquared = FVector::DistSquared(CurrentPosition,OtherPosition);
+		if (CurrentPosition == OtherPosition || ProximityDistanceSquared > FMath::Square(ProximityRadius))
 		{
 			continue;
 		}
@@ -249,10 +249,10 @@ FVector ABFlock::Align(TArray<FVector>& BoidsPositions, const int32 CurrentIndex
 	const FVector CurrentPosition = BoidsPositions[CurrentIndex];
 	for (FVector OtherPosition : BoidsPositions)
 	{		
-		const float ProximityDistance = FVector::Dist(CurrentPosition, OtherPosition);
+		const float ProximityDistanceSquared = FVector::DistSquared(CurrentPosition,OtherPosition);
 		
 		// Ignore self and filter out other birds that are far away and irrelevant
-		if (OtherPosition == CurrentPosition || ProximityDistance > ProximityRadius)
+		if (OtherPosition == CurrentPosition || ProximityDistanceSquared > FMath::Square(ProximityRadius))
 		{
 			continue;
 		}
@@ -317,8 +317,8 @@ FVector ABFlock::Cohere(TArray<FVector>& BoidsPositions, int CurrentIndex) const
 	for (FVector OtherPosition : BoidsPositions)
 	{
 		// Filter out birds that are far away and irrelevant
-		const float ProximityDistance = FVector::Dist(CurrentPosition, OtherPosition);
-		if (ProximityDistance > ProximityRadius )
+		const float ProximityDistanceSquared = FVector::DistSquared(CurrentPosition, OtherPosition);
+		if (ProximityDistanceSquared > FMath::Square(ProximityRadius))
 		{
 			continue;
 		}
