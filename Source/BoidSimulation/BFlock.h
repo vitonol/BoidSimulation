@@ -7,6 +7,7 @@
 
 #include "BFlock.generated.h"
 
+class UBoxComponent;
 class UInstancedStaticMeshComponent;
 
 #define DEBUG_ENABLED 0
@@ -44,6 +45,8 @@ protected:
 	// Set in UI before spawning this actor
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	FVector InitialSpawnScale;
+
+	UBoxComponent* Box;
 	
 	//MOVEMENT
 protected:
@@ -102,10 +105,9 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boid DEBUG")
 	bool bToggleProximityDebug = true;
-
-	//Not Currenly Used
+	
+	//Helper functions
 	static inline FVector RandomPointInBoundingBox(const FVector& Center, const FVector& HalfSize) { return FMath::RandPointInBox(FBox(Center - HalfSize, Center + HalfSize)); }
-
-	//Helper function
+	
 	FVector GetVectorArrayAverage(const TArray<FVector>& Vectors);
 };

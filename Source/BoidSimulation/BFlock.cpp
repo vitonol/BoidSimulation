@@ -3,6 +3,7 @@
 
 #include "BFlock.h"
 
+#include "Components/BoxComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
 
 // Declare performance profiling stats
@@ -15,8 +16,17 @@ ABFlock::ABFlock()
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.bStartWithTickEnabled = true;
 	
+	Box = CreateDefaultSubobject<UBoxComponent>(FName("Box"));
+	Box->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Box->SetMobility(EComponentMobility::Static);
+	Box->SetBoxExtent(FVector{SpreadRadius});
+	Box->SetHiddenInGame(false);
+	SetRootComponent(Box);
+	
+	SetRootComponent(Box);
+	
 	ISMComp = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("ISM"));
-	SetRootComponent(ISMComp);
+	ISMComp->SetupAttachment(Box);
 	ISMComp->SetMobility(EComponentMobility::Static);
 	ISMComp->SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
 	ISMComp->SetGenerateOverlapEvents(false);
@@ -27,6 +37,9 @@ ABFlock::ABFlock()
 void ABFlock::BeginPlay()
 {
 	Super::BeginPlay();
+
+	Box->SetBoxExtent(FVector{SpreadRadius});
+	// Box->GetComponentLocation()
 	
 	// Update buffers and clear instances
 	UpdateBuffers(NumInstances);
@@ -37,15 +50,12 @@ void ABFlock::BeginPlay()
 	// Spawn instances with random transforms
 	TArray<FTransform> Transforms;
 	Transforms.Reserve(NumInstances);
-
-	float SpawnBounds = SpreadRadius * 0.5f;
-	
+		
+	FVector SpawnPoint = FVector::ZeroVector;
 	for (int32 i = 0; i < NumInstances; i++)    
 	{
-		FVector SpawnPoint = FVector(FMath::RandRange(-1.f, 1.f) * SpawnBounds,
-										FMath::RandRange(-1.f, 1.f) * SpawnBounds,
-										FMath::RandRange(-1.f, 1.f) * SpawnBounds);
-
+		SpawnPoint = RandomPointInBoundingBox(Box->GetComponentLocation(),Box->GetUnscaledBoxExtent() / 2.f );
+		
 		FRotator RandomRotator = FRotator(0.f,
 										FMath::RandRange(0.f, 359.998993f),
 										0.f);
@@ -53,7 +63,9 @@ void ABFlock::BeginPlay()
 		FTransform Transform(RandomRotator, SpawnPoint, InitialSpawnScale);
 		Transforms.Add(Transform);
 	}
-	InstanceIndices = ISMComp->AddInstances(Transforms, true, false);
+	InstanceIndices = ISMComp->AddInstances(Transforms, true, true);
+
+	// SpreadRadius += GetActorLocation().Size();
 }
 
 void ABFlock::UpdateBuffers(int32 NewCount)
@@ -169,7 +181,7 @@ FVector ABFlock::Separate(TArray<FVector>& BoidsPositions, int CurrentIndex) con
 	float ProximityFactor = 0.0f;
 	
 	FTransform InstanceTransform;
-	ISMComp->GetInstanceTransform(CurrentIndex,InstanceTransform);
+	ISMComp->GetInstanceTransform(CurrentIndex,InstanceTransform, true);
 	const FVector ForwardVector = InstanceTransform.GetUnitAxis(EAxis::X);
 	const FVector CurrentPosition = BoidsPositions[CurrentIndex];
 	
@@ -243,7 +255,7 @@ FVector ABFlock::Align(TArray<FVector>& BoidsPositions, const int32 CurrentIndex
 	int32 FlockCount = 0;
 
 	FTransform InstanceTransform;
-	ISMComp->GetInstanceTransform(CurrentIndex,InstanceTransform);
+	ISMComp->GetInstanceTransform(CurrentIndex,InstanceTransform, true);
 	const FVector ForwardVector = InstanceTransform.GetUnitAxis(EAxis::X);
 
 	const FVector CurrentPosition = BoidsPositions[CurrentIndex];
@@ -310,7 +322,7 @@ FVector ABFlock::Cohere(TArray<FVector>& BoidsPositions, int CurrentIndex) const
 	FVector AveragePosition = FVector::ZeroVector;
 
 	FTransform InstanceTransform;
-	ISMComp->GetInstanceTransform(CurrentIndex,InstanceTransform);
+	ISMComp->GetInstanceTransform(CurrentIndex,InstanceTransform, true);
 	const FVector ForwardVector = InstanceTransform.GetUnitAxis(EAxis::X);
 
 	const FVector CurrentPosition = BoidsPositions[CurrentIndex];
@@ -358,7 +370,7 @@ FVector ABFlock::Cohere(const TArrayView<FVector>& Velocities, const int32 Curre
 	for (const int32 OtherBoidIndex : OtherRelevantBoidIndices)
 	{
 		FTransform OtherTransform{NoInit};
-		ISMComp->GetInstanceTransform(OtherBoidIndex, OtherTransform);
+		ISMComp->GetInstanceTransform(OtherBoidIndex, OtherTransform, true);
 
 		Steering += OtherTransform.GetTranslation();
 	}
@@ -378,12 +390,14 @@ void ABFlock::Redirect(FVector& Direction, const int32 CurrentIndex)
 	DECLARE_SCOPE_CYCLE_COUNTER(TEXT("Redirect"), STAT_Redirect, STATGROUP_BoidProfiling);
 	
 	FTransform Transform{NoInit};
-	ISMComp->GetInstanceTransform(CurrentIndex,Transform);
+	ISMComp->GetInstanceTransform(CurrentIndex,Transform, true);
 
-	if (Transform.GetTranslation().SizeSquared() > FMath::Square(SpreadRadius - ProximityRadius - UE_DOUBLE_KINDA_SMALL_NUMBER))
+	FVector ActorLocation = GetActorLocation();
+	// const float AdjustedSpreadRadius = SpreadRadius + GetActorLocation().Size();
+	if ((Transform.GetTranslation() - ActorLocation).SizeSquared() > FMath::Square(SpreadRadius - ProximityRadius - UE_DOUBLE_KINDA_SMALL_NUMBER))
 	{
-		const double Dist = Transform.GetTranslation().Size();
-		const FVector Dir = Transform.GetTranslation() / Dist;
+		const double Dist = (Transform.GetTranslation() - ActorLocation).Size();
+		const FVector Dir = (Transform.GetTranslation() - ActorLocation) / Dist;
 
 		// Calculate CrossProduct
 		// FVector RightAxis = Direction ^ Dir;
@@ -415,7 +429,7 @@ void ABFlock::Tick(float DeltaTime)
 	ParallelFor(NumInstances, [&](const int32 i) -> void
 	{
 		FTransform InstanceTransform{NoInit};
-		ISMComp->GetInstanceTransform(i,InstanceTransform);
+		ISMComp->GetInstanceTransform(i,InstanceTransform, true);
 		
 		//Update Stored Locations
 		BoidCurrentLocations[i] = InstanceTransform.GetLocation();
@@ -450,7 +464,7 @@ void ABFlock::Tick(float DeltaTime)
 		FVector NewBoidLocation = BoidCurrentLocations[i] + (CurrentBoidVelocity * DeltaTime);
 		TempBuffer[i] = FTransform(CurrentBoidVelocity.ToOrientationQuat(), NewBoidLocation);		
 	});
-	ISMComp->BatchUpdateInstancesTransforms(0, TempBuffer, false, true);
+	ISMComp->BatchUpdateInstancesTransforms(0, TempBuffer, true, true);
 }
 
 
