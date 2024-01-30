@@ -411,41 +411,46 @@ void ABFlock::Tick(float DeltaTime)
 	SCOPE_CYCLE_COUNTER(STAT_Simulate_GameThread);
 	Super::Tick(DeltaTime);
 
+	// Fetch Boid Locations
+	ParallelFor(NumInstances, [&](const int32 i) -> void
+	{
+		FTransform InstanceTransform{NoInit};
+		ISMComp->GetInstanceTransform(i,InstanceTransform);
+		
+		//Update Stored Locations
+		BoidCurrentLocations[i] = InstanceTransform.GetLocation();
+	});
+
 	//Multithreading allowing multiple iterations to be executed concurrently
 	ParallelFor(NumInstances, [&](const int32 i) -> void
 	{
 		FVector Acceleration = FVector::ZeroVector;
-		FVector CurrentBoidVelocity = BoidsVelocities[i];
-		
-		FTransform InstanceTransform{NoInit};
-		ISMComp->GetInstanceTransform(i,InstanceTransform);
-		FVector CurrentBoidLoc = InstanceTransform.GetLocation();
-				
-		//Update Stored Locations
-		BoidCurrentLocations[i] = CurrentBoidLoc;
-		
-		//Keep boids inside the bounds
-		Redirect(BoidsVelocities[i], i);
-		
-		//update position
-		FVector NewBoidLocation = CurrentBoidLoc + (CurrentBoidVelocity * DeltaTime);		
-		InstanceTransform.SetLocation(NewBoidLocation);
-		//update rotation
-		InstanceTransform.SetRotation(CurrentBoidVelocity.ToOrientationQuat());
 
 		//TODO Pre-filter near flockmates and only pass relevant array of boids for force calculations
 		//apply steering forces to acceleration vector
 		Acceleration += Separate(BoidCurrentLocations,i);
 		Acceleration += Align(BoidCurrentLocations,i);
 		Acceleration += Cohere(BoidCurrentLocations,i);
+		
+		//Keep boids inside the bounds
+		Redirect(BoidsVelocities[i], i);
 
 		//update velocities
 		BoidsVelocities[i] += (Acceleration * DeltaTime);
 		BoidsVelocities[i] = BoidsVelocities[i].GetClampedToSize(MinMovementSpeed, MaxMovementSpeed);
-		
-		ISMComp->UpdateInstanceTransform(i, InstanceTransform, false, false);
 	});
-	ISMComp->MarkRenderTransformDirty();
+
+	// Move Boids
+	TArray<FTransform> TempBuffer;
+	TempBuffer.SetNum(NumInstances);
+	
+	ParallelFor(NumInstances, [&](const int32 i) -> void
+	{
+		FVector CurrentBoidVelocity = BoidsVelocities[i];
+		FVector NewBoidLocation = BoidCurrentLocations[i] + (CurrentBoidVelocity * DeltaTime);
+		TempBuffer[i] = FTransform(CurrentBoidVelocity.ToOrientationQuat(), NewBoidLocation);		
+	});
+	ISMComp->BatchUpdateInstancesTransforms(0, TempBuffer, false, true);
 }
 
 
