@@ -9,7 +9,17 @@
 			"Type": "Runtime",
 			"LoadingPhase": "Default",
 			"AdditionalDependencies": [
-				"Engine"
+				"Engine",
+				"MassSpawner",
+				"MassEntity",
+				"MassCommon",
+				"MassActors",
+				"MassSimulation",
+				"MassLOD",
+				"MassMovement",
+				"MassReplication",
+				"StructUtils",
+				"ZoneGraph"
 			]
 		}
 	],
@@ -20,6 +30,22 @@
 			"TargetAllowList": [
 				"Editor"
 			]
+		},
+		{
+			"Name": "MassEntity",
+			"Enabled": true
+		},
+		{
+			"Name": "MassAI",
+			"Enabled": true
+		},
+		{
+			"Name": "MassGameplay",
+			"Enabled": true
+		},
+		{
+			"Name": "MassCrowd",
+			"Enabled": true
 		}
 	]
 }
